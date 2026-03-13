@@ -1,166 +1,129 @@
-name: Docker Build and Push
+name: Build and Push Docker Images
 
 on:
   workflow_dispatch:
-  schedule:
-    # Run daily at 2 AM UTC
-    - cron: '0 2 * * *'
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "**/README*"
-      - "**/readme*"
-      - "**/*.md"
-      - "**/docs/**"
-      - "**/CHANGELOG*"
-      - "**/LICENSE*"
-      - "**/*.test.*"
-      - "**/*.spec.*"
-      - "**/__tests__/**"
-      - "**/tests/**"
-      - "packages/sdks/**"
-      - "apps/public/**"
-      - "**/.vscode/**"
-      - "**/.cursor/**"
-      - "**/.env.example"
-      - "**/.env.*.example"
-      - "**/.gitignore"
-      - "**/.eslintignore"
-      - "**/.prettierignore"
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
 
 env:
-  repo_owner: "unchainedio"
+  REGISTRY: ghcr.io
+  REPO_OWNER: unchainedio
 
 jobs:
-  build-and-push-api:
-    permissions:
-      packages: write
-      contents: read
+  build-api:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Generate tags
-        id: tags
-        run: |
-          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          DATE_TAG=$(date +%Y%m%d-%H%M)
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push API image
-        uses: docker/build-push-action@v6
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/openpanel-api
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: apps/api/Dockerfile
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            ghcr.io/${{ env.repo_owner }}/openpanel-api:latest
-            ghcr.io/${{ env.repo_owner }}/openpanel-api:${{ steps.tags.outputs.date_tag }}
-            ghcr.io/${{ env.repo_owner }}/openpanel-api:${{ steps.tags.outputs.short_sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  build-and-push-worker:
-    permissions:
-      packages: write
-      contents: read
+  build-worker:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Generate tags
-        id: tags
-        run: |
-          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          DATE_TAG=$(date +%Y%m%d-%H%M)
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Worker image
-        uses: docker/build-push-action@v6
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/openpanel-worker
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: apps/worker/Dockerfile
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            ghcr.io/${{ env.repo_owner }}/openpanel-worker:latest
-            ghcr.io/${{ env.repo_owner }}/openpanel-worker:${{ steps.tags.outputs.date_tag }}
-            ghcr.io/${{ env.repo_owner }}/openpanel-worker:${{ steps.tags.outputs.short_sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  build-and-push-dashboard:
-    permissions:
-      packages: write
-      contents: read
+  build-dashboard:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Generate tags
-        id: tags
-        run: |
-          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          DATE_TAG=$(date +%Y%m%d-%H%M)
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Dashboard image
-        uses: docker/build-push-action@v6
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/openpanel-dashboard
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: apps/start/Dockerfile
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:latest
-            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:${{ steps.tags.outputs.date_tag }}
-            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:${{ steps.tags.outputs.short_sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             NO_CLOUDFLARE=1
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
