@@ -3,29 +3,24 @@ name: Docker Build and Push
 on:
   workflow_dispatch:
   schedule:
-    # Run daily at 2 AM UTC to catch upstream changes
+    # Run daily at 2 AM UTC
     - cron: '0 2 * * *'
   push:
     branches:
       - main
     paths-ignore:
-      # README and docs
       - "**/README*"
       - "**/readme*"
       - "**/*.md"
       - "**/docs/**"
       - "**/CHANGELOG*"
       - "**/LICENSE*"
-      # Test files
       - "**/*.test.*"
       - "**/*.spec.*"
       - "**/__tests__/**"
       - "**/tests/**"
-      # SDKs (published separately)
       - "packages/sdks/**"
-      # Public app (docs/marketing, not part of Docker deploy)
       - "apps/public/**"
-      # Dev / tooling
       - "**/.vscode/**"
       - "**/.cursor/**"
       - "**/.env.example"
@@ -38,76 +33,10 @@ env:
   repo_owner: "unchainedio"
 
 jobs:
-  sync-upstream:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Configure Git
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-      
-      - name: Sync with upstream
-        run: |
-          git remote add upstream https://github.com/Openpanel-dev/openpanel.git
-          git fetch upstream
-          git checkout main
-          git merge upstream/main --no-edit || echo "No changes to merge"
-          git push origin main
-
-  lint-and-test:
-    needs: sync-upstream
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Codegen
-        run: pnpm codegen
-
   build-and-push-api:
     permissions:
       packages: write
-      contents: write
-    needs: lint-and-test
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -116,12 +45,9 @@ jobs:
       - name: Generate tags
         id: tags
         run: |
-          # Sanitize branch name by replacing / with -
           BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          # Get first 4 characters of commit SHA
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-4)
-          # Get date tag
-          DATE_TAG=$(date +%Y%m%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          DATE_TAG=$(date +%Y%m%d-%H%M)
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
@@ -136,7 +62,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push API image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -145,34 +71,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ env.repo_owner }}/openpanel-api:${{ steps.tags.outputs.branch_name }}-${{ steps.tags.outputs.short_sha }}
-            ghcr.io/${{ env.repo_owner }}/openpanel-api:${{ steps.tags.outputs.date_tag }}
             ghcr.io/${{ env.repo_owner }}/openpanel-api:latest
+            ghcr.io/${{ env.repo_owner }}/openpanel-api:${{ steps.tags.outputs.date_tag }}
+            ghcr.io/${{ env.repo_owner }}/openpanel-api:${{ steps.tags.outputs.short_sha }}
           build-args: |
             DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy
-
-      - name: Create/Update API tag
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # Delete existing tag if it exists
-          if git tag -l "api" | grep -q "api"; then
-            git tag -d "api"
-            echo "Deleted local tag: api"
-          fi
-
-          # Create new tag
-          git tag "api" "${{ github.sha }}"
-          echo "Created tag: api"
-
-          # Push tag to remote
-          git push origin "api" --force
-          echo "Pushed tag: api"
 
   build-and-push-worker:
     permissions:
       packages: write
-      contents: write
-    needs: lint-and-test
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -181,12 +89,9 @@ jobs:
       - name: Generate tags
         id: tags
         run: |
-          # Sanitize branch name by replacing / with -
           BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          # Get first 4 characters of commit SHA
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-4)
-          # Get date tag
-          DATE_TAG=$(date +%Y%m%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          DATE_TAG=$(date +%Y%m%d-%H%M)
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
@@ -201,7 +106,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Worker image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -210,34 +115,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ env.repo_owner }}/openpanel-worker:${{ steps.tags.outputs.branch_name }}-${{ steps.tags.outputs.short_sha }}
-            ghcr.io/${{ env.repo_owner }}/openpanel-worker:${{ steps.tags.outputs.date_tag }}
             ghcr.io/${{ env.repo_owner }}/openpanel-worker:latest
+            ghcr.io/${{ env.repo_owner }}/openpanel-worker:${{ steps.tags.outputs.date_tag }}
+            ghcr.io/${{ env.repo_owner }}/openpanel-worker:${{ steps.tags.outputs.short_sha }}
           build-args: |
             DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy
-
-      - name: Create/Update Worker tag
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # Delete existing tag if it exists
-          if git tag -l "worker" | grep -q "worker"; then
-            git tag -d "worker"
-            echo "Deleted local tag: worker"
-          fi
-
-          # Create new tag
-          git tag "worker" "${{ github.sha }}"
-          echo "Created tag: worker"
-
-          # Push tag to remote
-          git push origin "worker" --force
-          echo "Pushed tag: worker"
 
   build-and-push-dashboard:
     permissions:
       packages: write
-      contents: write
-    needs: lint-and-test
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -246,12 +133,9 @@ jobs:
       - name: Generate tags
         id: tags
         run: |
-          # Sanitize branch name by replacing / with -
           BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          # Get first 4 characters of commit SHA
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-4)
-          # Get date tag
-          DATE_TAG=$(date +%Y%m%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          DATE_TAG=$(date +%Y%m%d-%H%M)
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
@@ -266,7 +150,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Dashboard image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -275,25 +159,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:${{ steps.tags.outputs.branch_name }}-${{ steps.tags.outputs.short_sha }}
-            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:${{ steps.tags.outputs.date_tag }}
             ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:latest
+            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:${{ steps.tags.outputs.date_tag }}
+            ghcr.io/${{ env.repo_owner }}/openpanel-dashboard:${{ steps.tags.outputs.short_sha }}
           build-args: |
             NO_CLOUDFLARE=1
-
-      - name: Create/Update Dashboard tag
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # Delete existing tag if it exists
-          if git tag -l "dashboard" | grep -q "dashboard"; then
-            git tag -d "dashboard"
-            echo "Deleted local tag: dashboard"
-          fi
-
-          # Create new tag
-          git tag "dashboard" "${{ github.sha }}"
-          echo "Created tag: dashboard"
-
-          # Push tag to remote
-          git push origin "dashboard" --force
-          echo "Pushed tag: dashboard"
